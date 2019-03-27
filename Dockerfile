@@ -1,4 +1,4 @@
-FROM golang:1.8-alpine
+FROM golang:1.10-alpine
 RUN apk update
 RUN apk add openssl ca-certificates git
 RUN mkdir -p /go/src/es-aws-api
