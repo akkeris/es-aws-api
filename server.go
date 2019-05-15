@@ -55,9 +55,10 @@ func vaulthelper(secret vault.VaultSecret, which string) (v string) {
 func setenv() {
 	plans = make(map[string]string)
 	plans["micro"] = "Micro - 1xCPU - 2 GB RAM - 10 GB Disk"
-	plans["small"] = "Small - 2xCPU - 4 GB RAN - 20 GB Disk"
-	plans["medium"] = "Medium - 2xCPU - 8 GB RAM - 40 GB Disk"
-	plans["large"] = "Large - 4xCPU - 16 GB RAN - 80 GB Disk"
+	plans["small"] = "Small - 2xCPU - 4 GB RAM - 20 GB Disk"
+	plans["medium"] = "Medium - 2xCPU - 8 GB RAM - 40 GB Disk - Encryption at Rest"
+	plans["large"] = "Large - 4xCPU - 16 GB RAM - 80 GB Disk - Encryption at Rest"
+        plans["premium-0"] = "Production - 3 masters - 4 data nodes - multi-AZ - 2xCPU - 8 GB RAM - 100 GB Disk each - Encryption at Rest"
 	region = os.Getenv("REGION")
 	svc = elasticsearchservice.New(session.New(&aws.Config{
 		Region: aws.String(region),
@@ -106,7 +107,7 @@ func delete_handler(params martini.Params, r render.Render) {
 
 func delete(domainname string) (e error) {
 	params := &elasticsearchservice.DeleteElasticsearchDomainInput{
-		DomainName: aws.String(domainname), 
+		DomainName: aws.String(domainname), // Required
 	}
 	_, err := svc.DeleteElasticsearchDomain(params)
 
@@ -234,37 +235,61 @@ func provision(domainname string, spec provisionspec) (e error) {
 	var volumesize int64
 	var volumetype string
 	var instancetype string
-
+        var masterinstancetype string
+        var mastercount int64
+        var instancecount int64
+        var kmspossible bool
 	if spec.Plan == "micro" {
 		volumesize = int64(10)
 		volumetype = "gp2"
 		instancetype = "t2.small.elasticsearch"
+                kmspossible = false
 	}
 
 	if spec.Plan == "small" {
 		volumesize = int64(20)
 		volumetype = "gp2"
 		instancetype = "t2.medium.elasticsearch"
+                kmspossible = false
 	}
 
 	if spec.Plan == "medium" {
 		volumesize = int64(40)
 		volumetype = "gp2"
 		instancetype = "m4.large.elasticsearch"
+                kmspossible = true
 	}
 
 	if spec.Plan == "large" {
 		volumesize = int64(80)
 		volumetype = "gp2"
 		instancetype = "m4.xlarge.elasticsearch"
+                kmspossible = true
 	}
+        if spec.Plan == "premium-0" {
+                volumesize = int64(100)
+                volumetype = "gp2"
+                instancetype = "m4.large.elasticsearch"
+                masterinstancetype = "m4.large.elasticsearch"
+                mastercount=3
+                instancecount=4
+        }
 
 	accountnumber := os.Getenv("ACCOUNTNUMBER")
-	snid := os.Getenv("SUBNET_ID")
+
+	snidcsv := os.Getenv("SUBNET_ID")
+        snidarray := strings.Split(snidcsv,",")
+        var snids []*string
+        for _, element := range snidarray {
+           newelement := fmt.Sprintf("%v",element)
+           snids = append(snids, &newelement)
+        }
+
 	sgid := os.Getenv("SECURITY_GROUP_ID")
 	sgids := []*string{&sgid}
-	snids := []*string{&snid}
 
+        
+    if !strings.Contains(spec.Plan,"premium") && !kmspossible {
 	params := &elasticsearchservice.CreateElasticsearchDomainInput{
 		DomainName:           aws.String(domainname),
 		ElasticsearchVersion: aws.String(esversion),
@@ -282,7 +307,7 @@ func provision(domainname string, spec provisionspec) (e error) {
 		},
 		VPCOptions: &elasticsearchservice.VPCOptions{
 			SecurityGroupIds: sgids,
-			SubnetIds:        snids,
+			SubnetIds:        snids[1:],
 		},
 	}
 	resp, err := svc.CreateElasticsearchDomain(params)
@@ -293,11 +318,85 @@ func provision(domainname string, spec provisionspec) (e error) {
 	}
 
 	fmt.Println(resp)
+      }
+    if !strings.Contains(spec.Plan,"premium") && kmspossible {
+        params := &elasticsearchservice.CreateElasticsearchDomainInput{
+                DomainName:           aws.String(domainname),
+                ElasticsearchVersion: aws.String(esversion),
+                AccessPolicies:       aws.String("{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"*\"},\"Action\":\"es:*\",\"Resource\":\"arn:aws:es:" + region + ":" + accountnumber + ":domain/" + domainname + "/*\"}]}"),
+                EBSOptions: &elasticsearchservice.EBSOptions{
+                        EBSEnabled: aws.Bool(true),
+                        VolumeSize: aws.Int64(volumesize),
+                        VolumeType: aws.String(volumetype),
+                },
+                ElasticsearchClusterConfig: &elasticsearchservice.ElasticsearchClusterConfig{
+                        DedicatedMasterEnabled: aws.Bool(false),
+                        InstanceCount:          aws.Int64(1),
+                        InstanceType:           aws.String(instancetype),
+                        ZoneAwarenessEnabled:   aws.Bool(false),
+                },
+                EncryptionAtRestOptions: &elasticsearchservice.EncryptionAtRestOptions {
+                   Enabled: aws.Bool(true),
+                   KmsKeyId:   aws.String(os.Getenv("KMSKEYID")),
+                },
+                VPCOptions: &elasticsearchservice.VPCOptions{
+                        SecurityGroupIds: sgids,
+                        SubnetIds:        snids[1:],
+                },
+        }
+        resp, err := svc.CreateElasticsearchDomain(params)
+
+        if err != nil {
+                fmt.Println(err.Error())
+                return err
+        }
+
+        fmt.Println(resp)
+      }
+
+    if strings.Contains(spec.Plan,"premium") {
+        params := &elasticsearchservice.CreateElasticsearchDomainInput{
+                DomainName:           aws.String(domainname),
+                ElasticsearchVersion: aws.String(esversion),
+                AccessPolicies:       aws.String("{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"*\"},\"Action\":\"es:*\",\"Resource\":\"arn:aws:es:" + region + ":" + accountnumber + ":domain/" + domainname + "/*\"}]}"),
+                EBSOptions: &elasticsearchservice.EBSOptions{
+                        EBSEnabled: aws.Bool(true),
+                        VolumeSize: aws.Int64(volumesize),
+                        VolumeType: aws.String(volumetype),
+                },
+                ElasticsearchClusterConfig: &elasticsearchservice.ElasticsearchClusterConfig{
+                        DedicatedMasterEnabled: aws.Bool(true),
+                        DedicatedMasterCount:   aws.Int64(mastercount),
+                        DedicatedMasterType:    aws.String(masterinstancetype),
+                        InstanceCount:          aws.Int64(instancecount),
+                        InstanceType:           aws.String(instancetype),
+                        ZoneAwarenessEnabled:   aws.Bool(true),
+                },
+                EncryptionAtRestOptions: &elasticsearchservice.EncryptionAtRestOptions {
+                   Enabled: aws.Bool(true),
+                   KmsKeyId:   aws.String(os.Getenv("KMSKEYID")),
+                },
+                VPCOptions: &elasticsearchservice.VPCOptions{
+                        SubnetIds:        snids,
+                        SecurityGroupIds: sgids,
+                },
+        }
+
+        resp, err := svc.CreateElasticsearchDomain(params)
+
+        if err != nil {
+                fmt.Println(err.Error())
+                return err
+        }
+
+        fmt.Println(resp)
+     }
+
 	var billingcode tagspec
 	billingcode.Resource = domainname
 	billingcode.Name = "billingcode"
 	billingcode.Value = spec.Billingcode
-	err = tag(billingcode)
+	err := tag(billingcode)
 	if err != nil {
 		fmt.Println(err.Error())
 		return err
@@ -314,7 +413,7 @@ func status(domainname string) (s ESSpec, e error) {
 	var spec ESSpec
 
 	params := &elasticsearchservice.DescribeElasticsearchDomainInput{
-		DomainName: aws.String(domainname), 
+		DomainName: aws.String(domainname), // Required
 	}
 	resp, err := svc.DescribeElasticsearchDomain(params)
 
