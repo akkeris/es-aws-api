@@ -2,7 +2,7 @@ package main
 
 import (
 	"database/sql"
-	"encoding/json"
+        "encoding/json"
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
@@ -181,7 +181,7 @@ func status_handler(param martini.Params, r render.Render) {
 		r.JSON(503, er)
 		return
 	}
-	bodybytes, err := json.Marshal(spec)
+        _, err = json.Marshal(spec)
 	if err != nil {
 		fmt.Println(err)
 		var er ErrorResponse
@@ -190,7 +190,6 @@ func status_handler(param martini.Params, r render.Render) {
 		r.JSON(503, er)
 		return
 	}
-	fmt.Println(string(bodybytes))
 	r.JSON(200, spec)
 }
 
@@ -344,14 +343,14 @@ func provision(domainname string, spec provisionspec) (e error) {
                         SubnetIds:        snids[1:],
                 },
         }
-        resp, err := svc.CreateElasticsearchDomain(params)
+        var err error
+        _, err = svc.CreateElasticsearchDomain(params)
 
         if err != nil {
                 fmt.Println(err.Error())
                 return err
         }
 
-        fmt.Println(resp)
       }
 
     if strings.Contains(spec.Plan,"premium") {
@@ -381,15 +380,14 @@ func provision(domainname string, spec provisionspec) (e error) {
                         SecurityGroupIds: sgids,
                 },
         }
-
-        resp, err := svc.CreateElasticsearchDomain(params)
+        var err error
+        _, err = svc.CreateElasticsearchDomain(params)
 
         if err != nil {
                 fmt.Println(err.Error())
                 return err
         }
 
-        fmt.Println(resp)
      }
 
 	var billingcode tagspec
@@ -487,12 +485,11 @@ func deletefromdb(domainname string) (e error) {
 		fmt.Println(err)
 		return err
 	}
-	affect, err := res.RowsAffected()
+	_, err = res.RowsAffected()
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-	fmt.Println(affect, "rows removed from provision table")
 	return nil
 }
 
